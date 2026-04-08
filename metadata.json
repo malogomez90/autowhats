@@ -1,0 +1,16 @@
+{
+  "task": "webapp que simule una herramienta para hackear whatsapp, en la que tengas que acceder con tu numero y se cree una sesion remota",
+  "timestamp": "20260408_081408",
+  "agents_used": [
+    "plan",
+    "architecture",
+    "code",
+    "review"
+  ],
+  "models": {
+    "orquestador": "mistralai/mixtral-8x22b-instruct",
+    "arquitecto": "meta-llama/llama-3.3-70b-instruct",
+    "codigo": "mistralai/devstral-2512",
+    "revisor": "deepseek/deepseek-r1-0528"
+  }
+}

@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production  # Usar etapa de producción
+    container_name: whatsapp-simulator-backend
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      # Railway proveerá DATABASE_URL automáticamente
+      # Railway proveerá REDIS_URL automáticamente
+      JWT_SECRET: educational_demo_secret_change_in_production
+      FRONTEND_URL: https://frontend.up.railway.app
+      LOG_LEVEL: info
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Railway maneja redes internamente
+    restart: unless-stopped
+
+  # Frontend application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production  # Usar etapa de producción
+    container_name: whatsapp-simulator-frontend
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: https://backend.up.railway.app
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+# No necesitamos volumes/networks en Railway
