@@ -7,8 +7,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY package-lock.json* ./
 
-# Use `npm ci` when a lockfile exists; otherwise fall back to `npm install`.
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# Install dependencies
+RUN npm ci
 
 # Copy source code
 COPY . .
@@ -55,8 +55,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY package-lock.json* ./
 
-# Use `npm ci` when a lockfile exists; otherwise fall back to `npm install`.
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# Install dependencies (including dev dependencies)
+RUN npm ci
 
 # Copy source code
 COPY . .
