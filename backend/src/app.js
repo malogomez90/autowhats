@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/authRoutes.js';
 import sessionRoutes from './routes/sessionRoutes.js';
 import simulationRoutes from './routes/simulationRoutes.js';
+import attackRoutes from './routes/attackRoutes.js';
 
 // Import utilities
 import logger from './utils/logger.js';
@@ -71,11 +72,12 @@ app.get('/health', async (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/session', sessionRoutes);
 app.use('/api/simulation', simulationRoutes);
+app.use('/api/attack', attackRoutes);
 
 // Documentation endpoint
 app.get('/api/docs', (req, res) => {
   res.json({
-    message: 'Welcome to WhatsApp Hack Simulator API',
+    message: 'Welcome to WhatsApp Pentest Simulator API',
     endpoints: {
       auth: {
         login: 'POST /api/auth/login',
@@ -91,9 +93,19 @@ app.get('/api/docs', (req, res) => {
         attacks: 'GET /api/simulation/attacks',
         phishing: 'POST /api/simulation/phishing',
         bruteForce: 'POST /api/simulation/brute-force'
+      },
+      attack: {
+        recon: 'POST /api/attack/recon',
+        simSwap: 'POST /api/attack/sim-swap',
+        webHijack: 'POST /api/attack/web-hijack',
+        status: 'GET /api/attack/status/:attackId',
+        active: 'GET /api/attack/active',
+        capabilities: 'GET /api/attack/capabilities',
+        health: 'GET /api/attack/health'
       }
     },
-    note: 'This is an educational demo. No real attacks are performed.'
+    note: 'This is an educational demo. No real attacks are performed.',
+    warning: '⚠️ All attack simulations use synthetic data only. Real attacks are illegal.'
   });
 });
 
