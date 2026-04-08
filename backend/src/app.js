@@ -13,6 +13,7 @@ import simulationRoutes from './routes/simulationRoutes.js';
 // Import utilities
 import logger from './utils/logger.js';
 import errorHandler from './utils/errorHandler.js';
+import { initializeDatabase, isDatabaseConfigured, isDatabaseReady, pingDatabase } from './utils/database.js';
 
 // Load environment variables
 dotenv.config();
@@ -54,11 +55,15 @@ app.use((req, res, next) => {
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'healthy',
+app.get('/health', async (req, res) => {
+  const database = await pingDatabase();
+  const status = !database.configured || database.ready ? 'healthy' : 'degraded';
+
+  res.status(status === 'healthy' ? 200 : 503).json({
+    status,
     timestamp: new Date().toISOString(),
-    service: 'whatsapp-hack-simulator-backend'
+    service: 'whatsapp-hack-simulator-backend',
+    database
   });
 });
 
@@ -104,9 +109,20 @@ app.use('*', (req, res) => {
 app.use(errorHandler);
 
 // Start server
-app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+const startServer = async () => {
+  await initializeDatabase();
+
+  app.listen(PORT, () => {
+    logger.info(`Server running on port ${PORT}`);
+    logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    logger.info(`Database configured: ${isDatabaseConfigured()}`);
+    logger.info(`Database ready: ${isDatabaseReady()}`);
+  });
+};
+
+startServer().catch((error) => {
+  logger.error(`Failed to start server: ${error.message}`);
+  process.exit(1);
 });
 
 export default app;

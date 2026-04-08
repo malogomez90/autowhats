@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import logger from '../utils/logger.js';
+import { isDatabaseReady, query } from '../utils/database.js';
 import { 
   UnauthorizedError, 
   ValidationError, 
@@ -10,6 +11,112 @@ import {
 
 // Mock user database (in production, this would be a real database)
 const mockUsers = new Map();
+
+const createStoredHash = async (password) => {
+  const value = password || crypto.randomUUID();
+  return bcrypt.hash(value, 10);
+};
+
+const mapDatabaseUser = (row) => ({
+  id: row.id,
+  phoneNumber: row.phone_number,
+  email: row.email,
+  passwordHash: row.hashed_password,
+  verificationCode: row.verification_code,
+  verificationCodeExpires: row.verification_code_expires,
+  isVerified: row.is_verified,
+  createdAt: row.created_at,
+  isSimulated: row.is_simulated
+});
+
+const getUserByPhoneNumber = async (phoneNumber) => {
+  if (!isDatabaseReady()) {
+    return mockUsers.get(phoneNumber) || null;
+  }
+
+  const result = await query(
+    `SELECT id, phone_number, email, hashed_password, verification_code, verification_code_expires,
+            is_verified, created_at, is_simulated
+     FROM users
+     WHERE phone_number = $1`,
+    [phoneNumber]
+  );
+
+  return result.rows[0] ? mapDatabaseUser(result.rows[0]) : null;
+};
+
+const createUser = async ({ phoneNumber, email = null, password, verificationCode = null, verificationCodeExpires = null, isVerified = false }) => {
+  const passwordHash = await createStoredHash(password);
+  const user = {
+    id: crypto.randomUUID(),
+    phoneNumber,
+    email,
+    passwordHash,
+    verificationCode,
+    verificationCodeExpires,
+    isVerified,
+    createdAt: new Date().toISOString(),
+    isSimulated: true
+  };
+
+  if (!isDatabaseReady()) {
+    mockUsers.set(phoneNumber, user);
+    return user;
+  }
+
+  const result = await query(
+    `INSERT INTO users (
+      id, phone_number, email, hashed_password, verification_code, verification_code_expires,
+      is_verified, is_simulated, created_at, updated_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW())
+    RETURNING id, phone_number, email, hashed_password, verification_code, verification_code_expires,
+              is_verified, created_at, is_simulated`,
+    [user.id, phoneNumber, email, passwordHash, verificationCode, verificationCodeExpires, isVerified]
+  );
+
+  return mapDatabaseUser(result.rows[0]);
+};
+
+const updateUserAfterLogin = async (phoneNumber) => {
+  if (!isDatabaseReady()) {
+    return;
+  }
+
+  await query(
+    'UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE phone_number = $1',
+    [phoneNumber]
+  );
+};
+
+const markUserAsVerified = async (phoneNumber) => {
+  if (!isDatabaseReady()) {
+    const user = mockUsers.get(phoneNumber);
+    if (!user) {
+      return null;
+    }
+
+    user.isVerified = true;
+    user.verificationCode = null;
+    user.verificationCodeExpires = null;
+    mockUsers.set(phoneNumber, user);
+    return user;
+  }
+
+  const result = await query(
+    `UPDATE users
+     SET is_verified = true,
+         verification_code = NULL,
+         verification_code_expires = NULL,
+         updated_at = NOW()
+     WHERE phone_number = $1
+     RETURNING id, phone_number, email, hashed_password, verification_code, verification_code_expires,
+               is_verified, created_at, is_simulated`,
+    [phoneNumber]
+  );
+
+  return result.rows[0] ? mapDatabaseUser(result.rows[0]) : null;
+};
 
 // Generate mock JWT token for educational purposes
 const generateMockToken = (user) => {
@@ -50,7 +157,7 @@ const authController = {
       await new Promise(resolve => setTimeout(resolve, 500));
       
       // Check if user exists in mock database
-      const user = mockUsers.get(phoneNumber);
+      const user = await getUserByPhoneNumber(phoneNumber);
       
       if (user) {
         // In real app, verify password
@@ -62,21 +169,37 @@ const authController = {
         }
       } else {
         // Create new mock user for demo
-        const newUser = {
-          id: crypto.randomUUID(),
-          phoneNumber,
-          passwordHash: password ? await bcrypt.hash(password, 10) : null,
-          email: null,
-          isVerified: false,
-          createdAt: new Date().toISOString(),
-          isSimulated: true
-        };
-        
-        mockUsers.set(phoneNumber, newUser);
+        const newUser = await createUser({ phoneNumber, password });
         logger.info(`Created new mock user: ${phoneNumber}`);
+        await updateUserAfterLogin(phoneNumber);
+
+        const token = generateMockToken(newUser);
+
+        logger.warn(`EDUCATIONAL DEMO: This is a simulated login. In a real attack scenario,`);
+        logger.warn(`an attacker would try to intercept this token or use it for unauthorized access.`);
+
+        return res.status(200).json({
+          success: true,
+          message: 'Simulated login successful',
+          token,
+          user: {
+            id: newUser.id,
+            phoneNumber: newUser.phoneNumber,
+            isVerified: newUser.isVerified,
+            isSimulated: true
+          },
+          securityNote: 'This is an educational demo. No real authentication occurred.',
+          educationalTips: [
+            'In real scenarios, always use HTTPS',
+            'Enable two-factor authentication',
+            'Never share verification codes',
+            'Use strong, unique passwords'
+          ]
+        });
       }
       
-      const userData = mockUsers.get(phoneNumber);
+      await updateUserAfterLogin(phoneNumber);
+      const userData = await getUserByPhoneNumber(phoneNumber);
       
       // Generate mock token
       const token = generateMockToken(userData);
@@ -120,7 +243,7 @@ const authController = {
       logger.info(`Simulated registration for phone: ${phoneNumber}`);
       
       // Check if user already exists
-      if (mockUsers.has(phoneNumber)) {
+      if (await getUserByPhoneNumber(phoneNumber)) {
         throw new ConflictError('User already exists');
       }
       
@@ -131,19 +254,14 @@ const authController = {
       simulateSendVerificationCode(phoneNumber, verificationCode);
       
       // Create mock user
-      const newUser = {
-        id: crypto.randomUUID(),
+      await createUser({
         phoneNumber,
         email: email || null,
-        passwordHash: password ? await bcrypt.hash(password, 10) : null,
+        password,
         verificationCode,
-        verificationCodeExpires: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
-        isVerified: false,
-        createdAt: new Date().toISOString(),
-        isSimulated: true
-      };
-      
-      mockUsers.set(phoneNumber, newUser);
+        verificationCodeExpires: new Date(Date.now() + 10 * 60 * 1000),
+        isVerified: false
+      });
       
       logger.info(`Educational note: In a real attack, registration forms can be used`);
       logger.info(`for credential harvesting if not properly secured.`);
@@ -173,7 +291,7 @@ const authController = {
     try {
       const { phoneNumber, code } = req.body;
       
-      const user = mockUsers.get(phoneNumber);
+      const user = await getUserByPhoneNumber(phoneNumber);
       
       if (!user) {
         throw new ValidationError('User not found');
@@ -189,10 +307,7 @@ const authController = {
       }
       
       // Mark user as verified
-      user.isVerified = true;
-      user.verificationCode = null;
-      user.verificationCodeExpires = null;
-      mockUsers.set(phoneNumber, user);
+      const verifiedUser = await markUserAsVerified(phoneNumber);
       
       logger.warn(`EDUCATIONAL DEMO: In real attacks, attackers might try to`);
       logger.warn(`intercept SMS verification codes (SIM swapping attacks).`);
@@ -202,7 +317,7 @@ const authController = {
         message: 'Simulated verification successful',
         user: {
           phoneNumber: user.phoneNumber,
-          isVerified: user.isVerified,
+          isVerified: verifiedUser?.isVerified ?? true,
           isSimulated: true
         },
         securityWarning: 'Real attackers use SIM swapping or social engineering to intercept verification codes',

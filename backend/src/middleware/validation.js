@@ -1,4 +1,5 @@
 import { validationResult } from 'express-validator';
+import jwt from 'jsonwebtoken';
 import logger from '../utils/logger.js';
 
 /**
@@ -130,23 +131,17 @@ export const validateJWT = (req, res, next) => {
   
   const token = authHeader.substring(7);
   
-  // In production, use a proper JWT library like jsonwebtoken
-  // This is a simplified educational implementation
   try {
-    // Simulated token validation
-    if (token.length < 10) {
-      throw new Error('Token too short');
-    }
-    
-    // Extract user info from token (simulated)
-    // In real implementation, this would decode and verify the JWT
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'educational_demo_secret');
+
     req.user = {
-      id: 'demo_user',
+      id: decoded.id || 'demo_user',
+      phoneNumber: decoded.phoneNumber,
       role: 'student',
       permissions: ['read', 'simulate'],
-      tokenIssuedAt: new Date().toISOString()
+      tokenIssuedAt: decoded.iat ? new Date(decoded.iat * 1000).toISOString() : new Date().toISOString()
     };
-    
+
     logger.info(`JWT validated for user: ${req.user.id}`);
     next();
   } catch (error) {

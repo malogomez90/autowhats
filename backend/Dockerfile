@@ -7,8 +7,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY package-lock.json* ./
 
-# Install dependencies (including dev dependencies for TypeScript)
-RUN npm ci
+# Use `npm ci` when a lockfile exists; otherwise fall back to `npm install`.
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 # Copy source code
 COPY . .
@@ -26,8 +26,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY package-lock.json* ./
 
-# Install only production dependencies
-RUN npm ci --only=production
+# Use the lockfile when available; otherwise install prod deps without generating a hard failure.
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
 # Copy built application from builder stage
 COPY --from=builder /app/src ./src
@@ -69,8 +69,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY package-lock.json* ./
 
-# Install all dependencies (including dev)
-RUN npm ci
+# Use `npm ci` when a lockfile exists; otherwise fall back to `npm install`.
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 # Copy source code
 COPY . .
@@ -90,8 +90,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY package-lock.json* ./
 
-# Install dependencies
-RUN npm ci
+# Use `npm ci` when a lockfile exists; otherwise fall back to `npm install`.
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 # Copy source code
 COPY . .

@@ -1,8 +1,24 @@
 import logger from '../utils/logger.js';
 import crypto from 'crypto';
+import { isDatabaseReady, query } from '../utils/database.js';
 
 // Mock session storage (in production, this would be a database)
 const mockSessions = new Map();
+
+const createTokenHash = () => crypto.createHash('sha256').update(crypto.randomUUID()).digest('hex');
+
+const mapDatabaseSession = (row) => ({
+  id: row.id,
+  userId: row.user_id,
+  deviceInfo: row.device_info,
+  location: row.location,
+  ipAddress: row.ip_address,
+  userAgent: row.user_agent,
+  createdAt: row.created_at,
+  lastActive: row.last_active,
+  isActive: row.is_active,
+  isSimulated: row.is_simulated
+});
 
 const sessionController = {
   /**
@@ -18,22 +34,34 @@ const sessionController = {
       
       // Create mock session
       const session = {
-        id: sessionId,
+        id: crypto.randomUUID(),
         userId,
+        tokenHash: createTokenHash(),
         deviceInfo,
         location,
         ipAddress: req.ip || `192.168.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`,
         userAgent: req.get('user-agent') || 'Unknown',
         createdAt: new Date().toISOString(),
         lastActive: new Date().toISOString(),
+        expirationTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         isActive: true,
         isSimulated: true
       };
       
-      // Store session
-      mockSessions.set(sessionId, session);
+      if (isDatabaseReady()) {
+        await query(
+          `INSERT INTO sessions (
+            id, user_id, token_hash, device_info, ip_address, user_agent, location,
+            is_active, is_simulated, created_at, last_active, expiration_time
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, true, true, NOW(), NOW(), $8)`,
+          [session.id, userId, session.tokenHash, deviceInfo, session.ipAddress, session.userAgent, location, session.expirationTime]
+        );
+      } else {
+        mockSessions.set(session.id, session);
+      }
       
-      logger.info(`Simulated session created: ${sessionId} for user: ${userId}`);
+      logger.info(`Simulated session created: ${session.id} for user: ${userId}`);
       
       // Educational warning
       logger.warn(`EDUCATIONAL DEMO: In real attacks, attackers might:`);
@@ -75,16 +103,35 @@ const sessionController = {
       const userId = req.user?.id || 'demo_user';
       
       // Filter sessions for this user
-      const userSessions = Array.from(mockSessions.values())
-        .filter(session => session.userId === userId && session.isActive)
-        .map(session => ({
-          id: session.id,
-          device: session.deviceInfo,
-          location: session.location,
-          ipAddress: session.ipAddress,
-          lastActive: session.lastActive,
-          isSimulated: true
-        }));
+      const userSessions = isDatabaseReady()
+        ? (await query(
+          `SELECT id, user_id, device_info, location, ip_address, user_agent,
+                  created_at, last_active, is_active, is_simulated
+           FROM sessions
+           WHERE user_id = $1 AND is_active = true
+           ORDER BY last_active DESC`,
+          [userId]
+        )).rows.map(row => {
+          const session = mapDatabaseSession(row);
+          return {
+            id: session.id,
+            device: session.deviceInfo,
+            location: session.location,
+            ipAddress: session.ipAddress,
+            lastActive: session.lastActive,
+            isSimulated: session.isSimulated
+          };
+        })
+        : Array.from(mockSessions.values())
+          .filter(session => session.userId === userId && session.isActive)
+          .map(session => ({
+            id: session.id,
+            device: session.deviceInfo,
+            location: session.location,
+            ipAddress: session.ipAddress,
+            lastActive: session.lastActive,
+            isSimulated: true
+          }));
       
       logger.info(`Retrieved ${userSessions.length} active sessions for user: ${userId}`);
       
@@ -125,20 +172,42 @@ const sessionController = {
       const limit = parseInt(req.query.limit) || 10;
       
       // Get all sessions for user (active and inactive)
-      const allSessions = Array.from(mockSessions.values())
-        .filter(session => session.userId === userId)
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-        .slice(0, limit)
-        .map(session => ({
-          id: session.id,
-          device: session.deviceInfo,
-          location: session.location,
-          ipAddress: session.ipAddress,
-          createdAt: session.createdAt,
-          lastActive: session.lastActive,
-          isActive: session.isActive,
-          isSimulated: true
-        }));
+      const allSessions = isDatabaseReady()
+        ? (await query(
+          `SELECT id, user_id, device_info, location, ip_address, user_agent,
+                  created_at, last_active, is_active, is_simulated
+           FROM sessions
+           WHERE user_id = $1
+           ORDER BY created_at DESC
+           LIMIT $2`,
+          [userId, limit]
+        )).rows.map(row => {
+          const session = mapDatabaseSession(row);
+          return {
+            id: session.id,
+            device: session.deviceInfo,
+            location: session.location,
+            ipAddress: session.ipAddress,
+            createdAt: session.createdAt,
+            lastActive: session.lastActive,
+            isActive: session.isActive,
+            isSimulated: session.isSimulated
+          };
+        })
+        : Array.from(mockSessions.values())
+          .filter(session => session.userId === userId)
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+          .slice(0, limit)
+          .map(session => ({
+            id: session.id,
+            device: session.deviceInfo,
+            location: session.location,
+            ipAddress: session.ipAddress,
+            createdAt: session.createdAt,
+            lastActive: session.lastActive,
+            isActive: session.isActive,
+            isSimulated: true
+          }));
       
       logger.info(`Retrieved ${allSessions.length} historical sessions for user: ${userId}`);
       
@@ -204,8 +273,22 @@ const sessionController = {
         });
       }
       
-      const session = mockSessions.get(sessionId);
-      
+      let session;
+
+      if (isDatabaseReady()) {
+        const result = await query(
+          `UPDATE sessions
+           SET is_active = false, terminated_at = NOW(), last_active = NOW()
+           WHERE id = $1
+           RETURNING id, user_id, device_info, location, ip_address, user_agent,
+                     created_at, last_active, is_active, is_simulated`,
+          [sessionId]
+        );
+        session = result.rows[0] ? mapDatabaseSession(result.rows[0]) : null;
+      } else {
+        session = mockSessions.get(sessionId);
+      }
+
       if (!session) {
         return res.status(404).json({
           success: false,
@@ -213,10 +296,11 @@ const sessionController = {
         });
       }
       
-      // Mark session as inactive
-      session.isActive = false;
-      session.terminatedAt = new Date().toISOString();
-      mockSessions.set(sessionId, session);
+      if (!isDatabaseReady()) {
+        session.isActive = false;
+        session.terminatedAt = new Date().toISOString();
+        mockSessions.set(sessionId, session);
+      }
       
       logger.info(`Terminated simulated session: ${sessionId}`);
       

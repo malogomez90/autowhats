@@ -16,6 +16,10 @@ const levels = {
 
 // Define level based on environment
 const level = () => {
+  if (process.env.LOG_LEVEL) {
+    return process.env.LOG_LEVEL;
+  }
+
   const env = process.env.NODE_ENV || 'development';
   return env === 'development' ? 'debug' : 'info';
 };
